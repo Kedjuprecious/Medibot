@@ -1,4 +1,4 @@
-import { createUserWithEmailAndPassword, getAuth, sendEmailVerification } from '@react-native-firebase/auth';
+import auth from '@react-native-firebase/auth';
 import { useRouter } from 'expo-router';
 import { FirebaseError } from "firebase/app";
 import { useState } from 'react';
@@ -9,7 +9,6 @@ import {
 
 export default function SignUp() {
   const router = useRouter();
-  const auth = getAuth();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -25,10 +24,9 @@ export default function SignUp() {
       return;
     }
     try {
-			const userCredential = await createUserWithEmailAndPassword(auth,email, password);
-      const user = userCredential.user
-      await sendEmailVerification(user);
-			alert('Check your emails!');
+			const userCredential = await auth().createUserWithEmailAndPassword(email, password);
+      await userCredential.user.sendEmailVerification();
+      alert('Check your emails!');
 		} catch (e: any) {
 			const err = e as FirebaseError;
 			alert('Registration failed: ' + err.message);

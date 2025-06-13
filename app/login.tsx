@@ -1,4 +1,4 @@
-import { getAuth, signInWithEmailAndPassword } from "@react-native-firebase/auth";
+import auth from "@react-native-firebase/auth";
 import { useRouter } from 'expo-router';
 import { FirebaseError } from 'firebase/app';
 import { useState } from 'react';
@@ -6,7 +6,6 @@ import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View 
 
 export default function Login() {
   const router = useRouter();
-  const auth = getAuth();
 
   const [email,setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -15,7 +14,7 @@ export default function Login() {
   const signIn = async () => {
 		setLoading(true);
 		try {
-			await signInWithEmailAndPassword(auth,email, password);
+			await auth().signInWithEmailAndPassword(email, password);
       router.push("/(tabs)");
 		} catch (e: any) {
 			const err = e as FirebaseError;
