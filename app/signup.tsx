@@ -1,25 +1,59 @@
+import auth from '@react-native-firebase/auth';
 import { useRouter } from 'expo-router';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { FirebaseError } from "firebase/app";
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert, StyleSheet, Text, TextInput, TouchableOpacity, View
+} from 'react-native';
 
 export default function SignUp() {
   const router = useRouter();
+
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSignup = async () => {
+    setLoading(true);
+    if(password !== confirmPassword){
+      Alert.alert("Passwords do not match");
+      setLoading(false);
+      return;
+    }
+    try {
+			await auth().createUserWithEmailAndPassword(email, password);
+			alert('Check your emails!');
+		} catch (e: any) {
+			const err = e as FirebaseError;
+			alert('Registration failed: ' + err.message);
+		} finally {
+			setLoading(false);
+		}
+  }
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Create an Account</Text>
 
-      <TextInput style={styles.input} placeholder="Full Name" autoCapitalize="words" />
-      <TextInput style={styles.input} placeholder="Email" keyboardType="email-address" autoCapitalize="none" />
-      <TextInput style={styles.input} placeholder="Password" secureTextEntry />
-      <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry />
+      <TextInput style={styles.input} onChangeText={setName} placeholder="Full Name" autoCapitalize="words" />
+      <TextInput style={styles.input} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" autoCapitalize="none" />
+      <TextInput style={styles.input} onChangeText={setPassword} placeholder="Password" secureTextEntry />
+      <TextInput style={styles.input} onChangeText={setConfirmPassword} placeholder="Confirm Password" secureTextEntry />
 
-      <TouchableOpacity style={styles.primaryButton}>
+      <TouchableOpacity style={styles.primaryButton} onPress={handleSignup}>
         <Text style={styles.primaryButtonText}>Sign Up</Text>
       </TouchableOpacity>
 
+      {loading ? (
+        <ActivityIndicator size={'small'} style={{ margin: 28 }} />
+      ):(
       <TouchableOpacity onPress={() => router.push('/login')}>
         <Text style={styles.link}>Already have an account? Login</Text>
-      </TouchableOpacity>
+      </TouchableOpacity>)
+    }
     </View>
   );
 }
@@ -40,6 +74,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: '#fff',
+    color: "#000",
     padding: 14,
     borderRadius: 8,
     borderWidth: 1,

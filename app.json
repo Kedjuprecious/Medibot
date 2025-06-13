@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "telemedicine-app",
-    "slug": "telemedicine-app",
+    "slug": "telemedicine",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -52,6 +52,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c4cc2d8c-1584-4faf-bbf3-347d04af1a5a"
+      }
     }
   }
 }
