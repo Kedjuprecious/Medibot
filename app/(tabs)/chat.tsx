@@ -1,172 +1,447 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-    Image,
-    Linking,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  StyleSheet,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Modal,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Markdown from 'react-native-markdown-display';
+import Icon from 'react-native-vector-icons/MaterialIcons';
+import { useRouter } from 'expo-router';
 
-export default function TabTwoScreen() {
-  return (
-    <ScrollView contentContainerStyle={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerIcon}>{`</>`}</Text>
-      </View>
+const GEMINI_API_KEY = 'YOUR_API_KEY_HERE';
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+const DEFAULT_MODEL = 'gemini-2.0-flash';
+const temperature = 0.7;
+const systemInstruction = `You are a cardiologist AI expert. Your role is to:
+- Ask 2 follow-up questions to understand user symptoms related to cardiovascular disease, one at a time, based on previous answers.
+- Based on answers, recommend first-line medical care (lifestyle advice, a natural thing they can do or take).
+- After the questions, respond in two distinct steps: first, give recommendations (medication/lifestyle/tests). If symptoms suggest emergency (like crushing chest pain, syncope, severe shortness of breath), advise urgent cardiologist consultation.
+- Then, on a separate call, generate a final summary with: Summary: <summary text>.
+Please be clear and structured, act like a compassionate, experienced cardiologist.`;
 
-      {/* Title */}
-      <View style={styles.titleContainer}>
-        <Text style={styles.title}>Explore</Text>
-      </View>
+type Message = {
+  sender: 'user' | 'ai';
+  text: string;
+};
 
-      <Text style={styles.paragraph}>This app includes example code to help you get started.</Text>
-
-      {/* Collapsible Sections */}
-      <Collapsible title="File-based routing">
-        <Text>
-          This app has two screens: <Text style={styles.bold}>app/(tabs)/index.tsx</Text> and{' '}
-          <Text style={styles.bold}>app/(tabs)/explore.tsx</Text>
-        </Text>
-        <Text>
-          The layout file in <Text style={styles.bold}>app/(tabs)/_layout.tsx</Text> sets up the tab navigator.
-        </Text>
-        <ExternalLink url="https://docs.expo.dev/router/introduction" label="Learn more" />
-      </Collapsible>
-
-      <Collapsible title="Android, iOS, and web support">
-        <Text>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <Text style={styles.bold}>w</Text> in the terminal running this project.
-        </Text>
-      </Collapsible>
-
-      <Collapsible title="Images">
-        <Text>
-          For static images, you can use the <Text style={styles.bold}>@2x</Text> and{' '}
-          <Text style={styles.bold}>@3x</Text> suffixes to provide files for different screen densities.
-        </Text>
-        <Image
-          source={require('@/assets/images/react-logo.png')}
-          style={{ alignSelf: 'center', width: 100, height: 100 }}
-          resizeMode="contain"
-        />
-        <ExternalLink url="https://reactnative.dev/docs/images" label="Learn more" />
-      </Collapsible>
-
-      <Collapsible title="Custom fonts">
-        <Text>
-          Open <Text style={styles.bold}>app/_layout.tsx</Text> to see how to load{' '}
-          <Text style={{ fontFamily: 'SpaceMono' }}>custom fonts such as this one.</Text>
-        </Text>
-        <ExternalLink
-          url="https://docs.expo.dev/versions/latest/sdk/font"
-          label="Learn more"
-        />
-      </Collapsible>
-
-      <Collapsible title="Light and dark mode components">
-        <Text>
-          This template has light and dark mode support. The{' '}
-          <Text style={styles.bold}>useColorScheme()</Text> hook lets you inspect the users current
-          color scheme, and adjust UI colors accordingly.
-        </Text>
-        <ExternalLink
-          url="https://docs.expo.dev/develop/user-interface/color-themes/"
-          label="Learn more"
-        />
-      </Collapsible>
-
-      <Collapsible title="Animations">
-        <Text>
-          This template includes an animated component. The{' '}
-          <Text style={styles.bold}>components/HelloWave.tsx</Text> uses{' '}
-          <Text style={styles.bold}>react-native-reanimated</Text> to create a waving hand animation.
-        </Text>
-        {Platform.OS === 'ios' && (
-          <Text>
-            The <Text style={styles.bold}>components/ParallaxScrollView.tsx</Text> provides a parallax effect.
-          </Text>
-        )}
-      </Collapsible>
-    </ScrollView>
-  );
-}
-
-function Collapsible({
-  title,
-  children,
-}: {
+type Conversation = {
+  id: number;
   title: string;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <View style={styles.collapsible}>
-      <TouchableOpacity onPress={() => setOpen(!open)}>
-        <Text style={styles.collapsibleTitle}>
-          {open ? '▼' : '▶'} {title}
-        </Text>
-      </TouchableOpacity>
-      {open && <View style={{ marginTop: 8 }}>{children}</View>}
-    </View>
-  );
-}
+  messages: Message[];
+};
 
-function ExternalLink({ url, label }: { url: string; label: string }) {
+export default function ChatApp() {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConvId, setActiveConvId] = useState<number>(1);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const [questionCount, setQuestionCount] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showDoctorModal, setShowDoctorModal] = useState(false);
+
+  const maxQuestions = 6;
+  const inputRef = useRef<TextInput>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const router = useRouter();
+
+  const activeConversation = conversations.find(c => c.id === activeConvId);
+
+  useEffect(() => {
+    const load = async () => {
+      const saved = await AsyncStorage.getItem('conversations');
+      if (saved) {
+        setConversations(JSON.parse(saved));
+      } else {
+        setConversations([{ id: 1, title: 'New Conversation', messages: [] }]);
+      }
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.setItem('conversations', JSON.stringify(conversations));
+  }, [conversations]);
+
+  const updateMessages = (convId: number, messages: Message[]) => {
+    setConversations(prev =>
+      prev.map(c =>
+        c.id === convId
+          ? {
+              ...c,
+              messages,
+              title:
+                c.title === 'New Conversation'
+                  ? messages.find(m => m.sender === 'user')?.text.slice(0, 30) || 'New Conversation'
+                  : c.title
+            }
+          : c
+      )
+    );
+  };
+
+  const sendMessage = async () => {
+    if (!input.trim() || !activeConversation) return;
+
+    const updatedMessages: Message[] = [...activeConversation.messages, { sender: 'user', text: input }];
+    updateMessages(activeConvId, updatedMessages);
+    setInput('');
+    setLoading(true);
+
+    const chatHistory = [
+      { role: 'user', parts: [{ text: systemInstruction }] },
+      ...updatedMessages.map(msg => ({
+        role: msg.sender === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.text }]
+      }))
+    ];
+
+    const payload = {
+      contents: chatHistory,
+      generationConfig: { temperature, maxOutputTokens: 800, topP: 0.8, topK: 10 },
+      safetySettings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }]
+    };
+
+    try {
+      const res = await fetch(`${GEMINI_BASE_URL}/${DEFAULT_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No response.';
+
+      let recommendationText = reply;
+      let summaryText = '';
+      const summaryIndex = reply.toLowerCase().indexOf('summary:');
+      if (summaryIndex !== -1) {
+        recommendationText = reply.slice(0, summaryIndex).trim();
+        summaryText = reply.slice(summaryIndex).trim();
+      }
+
+      const newMessages: Message[] = [...updatedMessages, { sender: 'ai', text: recommendationText }];
+      updateMessages(activeConvId, newMessages);
+      scrollToBottom();
+
+      if (summaryText) {
+        setTyping(true);
+        setTimeout(() => {
+          setConversations(prev =>
+            prev.map(c =>
+              c.id === activeConvId
+                ? {
+                    ...c,
+                    messages: [...c.messages, { sender: 'ai', text: summaryText }]
+                  }
+                : c
+            )
+          );
+          setTyping(false);
+          scrollToBottom();
+          setShowDoctorModal(true);
+        }, 1500);
+      }
+
+      if (questionCount < maxQuestions) {
+        setQuestionCount(prev => prev + 1);
+      }
+    } catch (err) {
+      updateMessages(activeConvId, [...updatedMessages, { sender: 'ai', text: 'Error occurred.' }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const scrollToBottom = () => {
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+  };
+
+  const createNewConv = () => {
+    const newId = conversations.length ? Math.max(...conversations.map(c => c.id)) + 1 : 1;
+    const newConv: Conversation = { id: newId, title: 'New Conversation', messages: [] };
+    setConversations([...conversations, newConv]);
+    setActiveConvId(newId);
+    setQuestionCount(0);
+    setInput('');
+    setSidebarOpen(false);
+    setTimeout(() => inputRef.current?.focus(), 200);
+  };
+
+  const deleteConv = (id: number) => {
+    Alert.alert('Delete Conversation', 'Are you sure?', [
+      {
+        text: 'Yes',
+        onPress: () => {
+          const updated = conversations.filter(c => c.id !== id);
+          setConversations(updated);
+          if (activeConvId === id && updated.length) {
+            setActiveConvId(updated[0].id);
+          } else if (activeConvId === id && !updated.length) {
+            createNewConv();
+          }
+        }
+      },
+      { text: 'Cancel', style: 'cancel' }
+    ]);
+  };
+
+  const isInitialEmpty = questionCount === 0 && (activeConversation?.messages.length === 0 || !activeConversation);
+
   return (
-    <TouchableOpacity onPress={() => Linking.openURL(url)}>
-      <Text style={styles.link}>{label}</Text>
-    </TouchableOpacity>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <View style={{ flex: 1 }}>
+        {/* Top Bar */}
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={() => setSidebarOpen(true)}>
+            <Text style={styles.hamburger}>☰</Text>
+          </TouchableOpacity>
+          <Text style={styles.topTitle}>CardioBot</Text>
+        </View>
+
+        {/* Sidebar */}
+        {sidebarOpen && (
+          <View style={styles.sidebarOverlay}>
+            <View style={styles.sidebarContent}>
+              <TouchableOpacity onPress={() => setSidebarOpen(false)} style={styles.closeBtn}>
+                <Text style={{ fontSize: 18 }}>✕</Text>
+              </TouchableOpacity>
+              <Text style={styles.header}>Conversations</Text>
+              <ScrollView>
+                {conversations.map(c => (
+                  <View
+                    key={c.id}
+                    style={[
+                      styles.convItem,
+                      c.id === activeConvId && styles.activeConv,
+                      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }
+                    ]}
+                  >
+                    <TouchableOpacity
+                      style={{ flex: 1, paddingVertical: 5 }}
+                      onPress={() => {
+                        setActiveConvId(c.id);
+                        setSidebarOpen(false);
+                        setQuestionCount(0);
+                        setInput('');
+                      }}
+                    >
+                      <Text numberOfLines={1}>{c.title}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => deleteConv(c.id)} style={{ padding: 5 }}>
+                      <Icon name="delete" size={20} color="red" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+              <TouchableOpacity onPress={createNewConv} style={styles.newBtn}>
+                <Text style={{ color: 'white' }}>+ New</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Chat Area */}
+        <View style={[styles.chatContainer, isInitialEmpty && { justifyContent: 'center', alignItems: 'center' }]}>
+          {isInitialEmpty ? (
+            <Text style={styles.welcomeText}>Start a conversation with CardioBot!</Text>
+          ) : (
+            <ScrollView ref={scrollViewRef} contentContainerStyle={{ padding: 10 }}>
+              {activeConversation?.messages.map((m, i) => (
+                <View key={i} style={m.sender === 'user' ? styles.userMsg : styles.aiMsg}>
+                  <Markdown>{m.text}</Markdown>
+                </View>
+              ))}
+              {typing && (
+                <View style={styles.aiMsg}>
+                  <Text style={{ fontStyle: 'italic', color: '#888' }}>CardioBot is typing...</Text>
+                </View>
+              )}
+            </ScrollView>
+          )}
+
+          {/* Input */}
+          <View style={styles.inputArea}>
+            <TextInput
+              ref={inputRef}
+              multiline
+              value={input}
+              onChangeText={setInput}
+              placeholder="Type a message..."
+              style={styles.input}
+              editable={!loading && !typing}
+            />
+            <TouchableOpacity onPress={sendMessage} style={styles.sendBtn} disabled={loading || !input.trim()}>
+              {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: 'white' }}>Send</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Doctor Modal */}
+        <Modal
+          visible={showDoctorModal}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowDoctorModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <Text style={styles.modalTitle}>Do you want to see a doctor?</Text>
+              <View style={styles.modalButtonsRow}>
+                <TouchableOpacity
+                  style={[styles.modalButton, { backgroundColor: '#0078d4' }]}
+                  onPress={() => {
+                    setShowDoctorModal(false);
+                    router.replace('/(tabs)/doctor');
+                  }}
+                >
+                  <Text style={styles.modalButtonText}>Yes</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalButton, { backgroundColor: '#999' }]}
+                  onPress={() => setShowDoctorModal(false)}
+                >
+                  <Text style={styles.modalButtonText}>No, I'm okay</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 24,
-    paddingBottom: 100,
+  topBar: {
+    height: 50,
+    backgroundColor: '#0078d4',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+  },
+  hamburger: { color: 'white', fontSize: 24, marginRight: 10 },
+  topTitle: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  sidebarOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    zIndex: 10,
+    flexDirection: 'row',
+  },
+  sidebarContent: {
+    width: 250,
+    backgroundColor: '#fff',
+    height: '100%',
+    padding: 10,
+    borderRightWidth: 1,
+    borderColor: '#ccc',
+  },
+  closeBtn: { alignSelf: 'flex-end', marginBottom: 10, padding: 5 },
+  header: { fontWeight: 'bold', marginBottom: 10, fontSize: 16 },
+  convItem: { padding: 6, marginVertical: 4, backgroundColor: '#ddd', borderRadius: 5 },
+  activeConv: { backgroundColor: '#bbb' },
+  newBtn: {
+    marginTop: 10,
+    backgroundColor: '#0078d4',
+    padding: 8,
+    alignItems: 'center',
+    borderRadius: 5,
+  },
+  chatContainer: { flex: 1, backgroundColor: '#f9f9f9', justifyContent: 'flex-end' },
+  welcomeText: { fontSize: 20, color: '#888', textAlign: 'center', marginBottom: 20 },
+  userMsg: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#0078d4',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 5,
+    maxWidth: '80%',
+  },
+  aiMsg: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#e5e5ea',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 5,
+    maxWidth: '80%',
+  },
+  inputArea: {
+    flexDirection: 'row',
+    padding: 8,
+    borderTopWidth: 1,
+    borderColor: '#ccc',
     backgroundColor: '#fff',
   },
-  header: {
-    height: 250,
+  input: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 10,
+    borderRadius: 5,
+    maxHeight: 100,
+  },
+  sendBtn: {
+    marginLeft: 8,
+    backgroundColor: '#0078d4',
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+    borderRadius: 5,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#D0D0D0',
-    marginBottom: 16,
+    padding: 20,
   },
-  headerIcon: {
-    fontSize: 60,
-    color: '#808080',
+  modalContainer: {
+    backgroundColor: 'white',
+    padding: 24,
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 6,
   },
-  titleContainer: {
+  modalTitle: {
+    fontSize: 20,
+    marginBottom: 24,
+    fontWeight: '700',
+    textAlign: 'center',
+    color: '#222',
+  },
+  modalButtonsRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 8,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
+  modalButton: {
+    flex: 1,
+    marginHorizontal: 6,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
   },
-  paragraph: {
+  modalButtonText: {
+    color: 'white',
     fontSize: 16,
-    marginBottom: 16,
-  },
-  bold: {
     fontWeight: '600',
-  },
-  collapsible: {
-    marginBottom: 16,
-  },
-  collapsibleTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  link: {
-    marginTop: 4,
-    color: '#007AFF',
-    textDecorationLine: 'underline',
   },
 });
