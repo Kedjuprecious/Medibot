@@ -23,10 +23,10 @@ export default function DashboardLayout() {
         }}
       />
       <Tabs.Screen
-        name="search"
+        name="doctor"
         options={{
-          title: 'Search',
-          tabBarIcon: ({ color, size }) => <Ionicons name="search" size={size} color={color} />,
+          title: 'Doctor',
+          tabBarIcon: ({ color, size }) => <Ionicons name="medkit" size={size} color={color} />,
         }}
       />
     </Tabs>
